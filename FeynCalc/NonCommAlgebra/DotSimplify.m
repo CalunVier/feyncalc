@@ -125,7 +125,8 @@ DotSimplify[expr_/;Head[expr]=!=List, OptionsPattern[]] :=
 			vars,rest1,rest2,condition,sameQ,hold, ex, sunTrace, tmpDOT,
 			holdDOTColor, holdDOTDirac, holdDOTPauli, holdDOTRest1, holdDOTRest2, holdDOTRest3,
 			nvar, time, time0, momList, momListEval, momRule,
-			optSortBy, commSortBy, acommSortBy,dsVerbose},
+			optSortBy, commSortBy, acommSortBy,dsVerbose,
+			dotLastOutput, dotHasOutput = False},
 
 		If [OptionValue[FCVerbose]===False,
 			dsVerbose=$VeryVerbose,
@@ -511,46 +512,144 @@ dlin0[a___] :=
 dlin0[a___] :=
 	dlin[a]/; !optExpanding;
 
-dlin1[{ok___}, b_/;DataType[b, NonCommutative], c___] :=
-	dlin1[{ok, b}, c];
+(* Keep the dlin1 head inert after peeling. Apart from preserving the original
+   replacement stages, this also preserves its identity inside held expressions.
+   Collect scalar slots separately and multiply from the right: combining all
+   coefficients at once would change machine-number underflow and rounding. *)
+dlin1[{}, a__] :=
+	dotPeel[{a}];
 
-dlin1[{ok___},(n_?NumberQ) b_/;DataType[b, NonCommutative], c___] :=
-	n dlin1[{ok, b}, c];
+dotPeel[args_List] :=
+	Module[{words = {}, coeffs = {}, b, scalar, numeric, rest = args},
+		While[rest =!= {},
+			b = First[rest];
+			rest = Rest[rest];
+			numeric = dotNumericFactor[b];
+			Which[
+				TrueQ[DataType[b, NonCommutative]],
+					AppendTo[words, b],
+				Head[numeric] === dotNumeric,
+					AppendTo[coeffs, numeric[[1]]];
+					AppendTo[words, numeric[[2]]],
+				NonCommFreeQ[b] === True && FreeQ[b, dlin1],
+					AppendTo[coeffs, b],
+				Head[b] === Times,
+					scalar = Select[b, NonCommFreeQ[#]&];
+					If[scalar =!= 1,
+						AppendTo[coeffs, scalar];
+						AppendTo[words, Select[b, !NonCommFreeQ[#]&]],
+						If[Intersection[Head /@ Cases2[b[[1]], $NonComm], Head /@ Cases2[Rest[b], $NonComm]] =!= {},
+							Message[DotSimplify::failmsg, "Detected commutative multiplication of noncommutative objects."];
+							Abort[]
+						];
+						rest = Join[{b[[1]], Rest[b]}, rest]
+					],
+				True,
+					AppendTo[words, b]
+			]
+		];
+		Fold[Times, dlin1[words], Reverse[coeffs]]
+	];
 
-dlin1[{ok___},b_, c___] :=
-	If[ NonCommFreeQ[b] === True && FreeQ[b, dlin1],
+(* The bulk path is restricted to ordinary Dirac words. In particular, nested
+   DOTs, traces and held expressions must retain the staged replacement order:
+   evaluating an inner DOT can change the classification of an outer argument. *)
+dotSupported[x_] :=
+	Which[
+		MemberQ[{DiracGamma, Spinor}, Head[x]], True,
+		NonCommFreeQ[x], True,
+		MemberQ[{Plus, DOT, holdDOT}, Head[x]], AllTrue[List @@ x, dotSupported],
+		Head[x] === Times,
+			Count[NonCommFreeQ /@ (List @@ x), False] <= 1 && AllTrue[List @@ x, dotSupported],
+		True, False
+	];
 
-		b dlin1[{ok}, c],
+(* A declared noncommutative object can itself be a Times expression.
+   Match the same numeric-times-declared-object rule as the recursive engine,
+   rather than deciding commutativity from the individual factors alone. *)
+dotNumericFactor[t_] :=
+	Replace[t, HoldPattern[(n_?NumberQ) b_] /; TrueQ[DataType[b, NonCommutative]] :> dotNumeric[n, b]];
 
-		If[ Head[b] === Times,
-			If[ Select[b, NonCommFreeQ[#]&] =!= 1,
-				Select[b, NonCommFreeQ[#]&] dlin1[{ok, Select[b, !NonCommFreeQ[#]&]}, c],
-				(*The head is Times, and there are only noncommutative objects inside *)
-				(*dlin1[{ok},b[[1]]] dlin1[{},Rest[b],c]*)
-				(*	If there is a Times between noncommutative objects with the same head, there clearly must be
-					something wrong; TODO: head2 instead of Head to map all relevant Dirac heads to the same name. *)
-				If[ Intersection[(Head/@Cases2[b[[1]],$NonComm]),(Head/@Cases2[Rest[b],$NonComm])]=!={},
-					Message[DotSimplify::failmsg,"Detected commutative multiplication of noncommutative objects."];
-					Abort[]
-				];
-				dlin1[{ok},b[[1]],Rest[b],c]
+dotSplit[t_] :=
+	Module[{factors, scalar, noncomm, integers, rest, numeric},
+		factors = If[Head[t] === Times, List @@ t, {t}];
+		(* Only integer factors of Times are extracted by dlin0. Bare integer
+		   slots must retain their position in the right-associated product. *)
+		integers = If[Head[t] === Times, Select[factors, IntegerQ], {}];
+		rest = If[Head[t] === Times, Times @@ Select[factors, !IntegerQ[#]&], t];
+		If[TrueQ[DataType[rest, NonCommutative]],
+			If[Head[rest] === Plus, dotNeedsMore = True];
+			Return[{Times @@ integers, 1, {rest}}]
+		];
+		numeric = dotNumericFactor[rest];
+		If[Head[numeric] === dotNumeric,
+			If[Head[numeric[[2]]] === Plus, dotNeedsMore = True];
+			Return[{Times @@ integers, numeric[[1]], {numeric[[2]]}}]
+		];
+		factors = If[Head[rest] === Times, List @@ rest, {rest}];
+		scalar = Select[factors, NonCommFreeQ];
+		noncomm = Select[factors, !NonCommFreeQ[#]&];
+		If[AnyTrue[noncomm, Head[#] === Plus&], dotNeedsMore = True];
+		{Times @@ integers, Times @@ scalar, noncomm}
+	];
+
+dotExpandWord[args_List] :=
+	Module[{choices},
+		choices = (dotSplit /@ If[Head[#] === Plus, List @@ #, {#}]&) /@ args;
+		Total[(With[{integers = Times @@ #[[All, 1]], coeffs = #[[All, 2]],
+			words = Flatten[#[[All, 3]], 1]},
+			(integers Fold[Times, dotWord @@ words, Reverse[coeffs]]) /. dotWord -> DOT
+		])& /@ Tuples[choices]]
+	];
+
+dotWalk[x_?AtomQ] :=
+	x;
+
+dotWalk[x_DOT] :=
+	dotExpandWord[dotWalk /@ (List @@ x)];
+
+dotWalk[x_] :=
+	Map[dotWalk, x];
+
+dotDiracStep[x_] :=
+	Block[{dotNeedsMore = False},
+		With[{result = dotWalk[x]}, {result, !dotNeedsMore}]
+	];
+
+dotExpand[x_] :=
+	Module[{stepResult},
+		If[TrueQ[optExpanding] && optDotSimplifyRelations === {} &&
+			DownValues[FCCommutator] === initialCommutatorDownValues &&
+			DownValues[FCAntiCommutator] === initialAntiCommutatorDownValues,
+			Which[
+				TrueQ[dotHasOutput] && SameQ[x, dotLastOutput], x,
+				FreeQ[x, scalarDot_DOT /; NonCommFreeQ[scalarDot]] &&
+				FreeQ[x, nested_DOT /; !FreeQ[List @@ nested, DOT]] &&
+				FreeQ[x, empty_DOT /; Length[empty] === 0] &&
+				FreeQ[x, _DiracTrace | _SUNTrace | _PauliTrace | _sunTrace] &&
+				Cases[x, t_ /; (!AtomQ[t] && MatchQ[Head[t], _Symbol] &&
+					!FreeQ[Attributes[Evaluate[Head[t]]], HoldAll | HoldAllComplete | HoldFirst | HoldRest]) :> Head[t],
+					{0, Infinity}] === {} && dotSupported[x],
+					stepResult = dotDiracStep[x];
+					dotLastOutput = stepResult[[1]];
+					dotHasOutput = stepResult[[2]];
+					dotLastOutput,
+				True,
+					dotHasOutput = False;
+					dotStagedExpand[x]
 			],
-			dlin1[{ok,b},c]
+			dotHasOutput = False;
+			dotStagedExpand[x]
 		]
 	];
 
-
-dotExpand[x_]:=
+dotStagedExpand[x_] :=
 	Block[{tmp},
-		(*FCPrint[4, "DotSimplify: dotExpand: Entering with: ", x, FCDoControl->dsVerbose];*)
-		tmp = x;
-		tmp = tmp /. DOT -> dlin0;
-		(*FCPrint[4, "DotSimplify: dotExpand: After dlin0: ", tmp, FCDoControl->dsVerbose];*)
-		tmp = tmp /. dlin0 -> dlin  //. dlin[a__] :> dlin1[{}, a];
+		tmp = x /. DOT -> dlin0;
+		tmp = tmp /. dlin0 -> dlin //. dlin[a__] :> dlin1[{}, a];
 		tmp = tmp //. dlin1[{a___}] :> DOT[a];
 		tmp = tmp /. DOT -> DOTcomm;
 		tmp = tmp /. dlin -> DOT;
-		(*FCPrint[4, "DotSimplify: dotExpand: Leaving with: ", tmp, FCDoControl->dsVerbose];*)
 		tmp
 	];
 
