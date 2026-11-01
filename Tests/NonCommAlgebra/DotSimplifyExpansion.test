@@ -1,0 +1,76 @@
+
+(* :Title: DotSimplifyExpansion.test                                       *)
+
+(*
+	This software is covered by the GNU General Public License 3.
+	Copyright (C) 1990-2026 Rolf Mertig
+	Copyright (C) 1997-2026 Frederik Orellana
+	Copyright (C) 2014-2026 Vladyslav Shtabovenko
+*)
+
+(* :Summary: Regression tests for staged and ordered-word DOT expansion    *)
+
+(* ------------------------------------------------------------------------ *)
+
+Tests`NonCommAlgebra`fcstDotSimplifyExpansion = {
+{"fcstDotSimplifyExpansion-ID1",
+"DotSimplify[(a GA[mu] + b GA[nu]).(c GS[p] + d GS[q]), FCE -> True]",
+"a c GA[mu].GS[p] + a d GA[mu].GS[q] + b c GA[nu].GS[p] + b d GA[nu].GS[q]"},
+{"fcstDotSimplifyExpansion-ID2",
+"DotSimplify[GA[mu].(x (GS[p] + GS[q])), FCE -> True]",
+"x (GA[mu].GS[p] + GA[mu].GS[q])"},
+{"fcstDotSimplifyExpansion-ID3",
+"DotSimplify[(I/2 GS[p]).(GS[q] + GS[r]), FCE -> True]",
+"I/2 GS[p].GS[q] + I/2 GS[p].GS[r]"},
+
+(* The expected result deliberately preserves the scalar multiplication
+   boundaries. Multiplying these coefficients together first underflows. *)
+{"fcstDotSimplifyExpansion-ID4",
+"SameQ[DotSimplify[(1.*^-200 GS[p]).(1.*^-200 GS[q]).(1.*^200 GS[r]), FCE -> True], Fold[Times, GS[p].GS[q].GS[r], Reverse[{1.*^-200, 1.*^-200, 1.*^200}]]]",
+"True"},
+{"fcstDotSimplifyExpansion-ID5",
+"SameQ[DotSimplify[((1.1 + 2.2 I) GS[p]).((3.3 + 4.4 I) GS[q]), FCE -> True], Fold[Times, GS[p].GS[q], Reverse[{1.1 + 2.2 I, 3.3 + 4.4 I}]]]",
+"True"},
+{"fcstDotSimplifyExpansion-ID6",
+"SameQ[DotSimplify[(N[1/3, 30] GS[p]).(N[2/7, 20] GS[q]).(N[5/11, 40] GS[r]), FCE -> True], Fold[Times, GS[p].GS[q].GS[r], Reverse[{N[1/3, 30], N[2/7, 20], N[5/11, 40]}]]]",
+"True"},
+{"fcstDotSimplifyExpansion-ID7",
+"DotSimplify[GS[p].(a (GS[q] + GS[r])), Expanding -> False, FCE -> True]",
+"a GS[p].(GS[q] + GS[r])"},
+{"fcstDotSimplifyExpansion-ID8",
+"DotSimplify[{GS[p].(GS[q] + GS[r]), GS[r].(GS[p] + GS[q])}, FCE -> True]",
+"{GS[p].GS[q] + GS[p].GS[r], GS[r].GS[p] + GS[r].GS[q]}"},
+{"fcstDotSimplifyExpansion-ID9",
+"DotSimplify[GA[mu].(GS[p] + GS[q]), MaxIterations -> 1, FCE -> True]",
+"GA[mu].GS[p] + GA[mu].GS[q]"},
+{"fcstDotSimplifyExpansion-ID10",
+"DotSimplify[GA[mu].(GS[p] + GS[q]), MaxIterations -> 0, FCE -> True]",
+"GA[mu].(GS[p] + GS[q])"},
+
+(* An inner scalar DOT can evaluate a function to a new noncommutative
+   expression. It must not be mistaken for a completed bulk expansion. *)
+{"fcstDotSimplifyExpansion-ID11",
+"Module[{f, x, y}, f[x y] := (DiracGamma[LorentzIndex[mu]] + DiracGamma[LorentzIndex[nu]]).DiracGamma[LorentzIndex[rho]]; DotSimplify[f[x.y], FCE -> True]]",
+"GA[mu].GA[rho] + GA[nu].GA[rho]"},
+{"fcstDotSimplifyExpansion-ID12",
+"Module[{a, b, result}, DeclareNonCommutative[a, b]; result = DotSimplify[a.b.a, DotSimplifyRelations -> {a.b -> 2 b.a}, DotPower -> True]; UnDeclareNonCommutative[a, b]; result === 2 b.a^2]",
+"True"},
+{"fcstDotSimplifyExpansion-ID13",
+"DotSimplify[GA[mu].(GS[p] + m).GA[nu], PreservePropagatorStructures -> True, FCE -> True]",
+"GA[mu].(GS[p] + m).GA[nu]"},
+{"fcstDotSimplifyExpansion-ID14",
+"DotSimplify[GA[mu].(DiracTrace[GA[nu].GA[rho]] GS[p] + GS[q]), FCE -> True]",
+"DiracTrace[GA[nu].GA[rho]] GA[mu].GS[p] + GA[mu].GS[q]"},
+{"fcstDotSimplifyExpansion-ID15",
+"Module[{x, y, result}, DeclareNonCommutative[x y]; result = DotSimplify[GA[mu].(x y), FCE -> True] === GA[mu].(x y); UnDeclareNonCommutative[x y]; result]",
+"True"},
+{"fcstDotSimplifyExpansion-ID16",
+"Module[{x, y, result}, DeclareNonCommutative[x y]; result = DotSimplify[GA[mu].(I x y), Expanding -> False, FCE -> True] === I GA[mu].(x y); UnDeclareNonCommutative[x y]; result]",
+"True"},
+{"fcstDotSimplifyExpansion-ID17",
+"Module[{x, y, result}, DeclareNonCommutative[x y]; result = DotSimplify[GA[mu].(1/2 x y), FCE -> True] === 1/2 GA[mu].(x y); UnDeclareNonCommutative[x y]; result]",
+"True"},
+{"fcstDotSimplifyExpansion-ID18",
+"Module[{x, y, result}, DeclareNonCommutative[x + y]; result = And @@ Flatten[Table[DotSimplify[GA[mu].(c (x+y)), MaxIterations -> n, FCE -> True] === If[n === 1, c GA[mu].(x+y), c (x GA[mu] + y GA[mu])], {c, {2, 1/2}}, {n, {1, 2, 100}}]]; UnDeclareNonCommutative[x + y]; result]",
+"True"}
+};
