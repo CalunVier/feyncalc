@@ -1,0 +1,59 @@
+(* :Title: DotExpandRegression.test                                         *)
+
+(*
+	This software is covered by the GNU General Public License 3.
+	Copyright (C) 1990-2026 Rolf Mertig
+	Copyright (C) 1997-2026 Frederik Orellana
+	Copyright (C) 2014-2026 Vladyslav Shtabovenko
+*)
+
+(* :Summary: Evaluation-order and terminal-chain regressions for DotExpand  *)
+
+(* The differential tests deliberately use SameQ, not expanded algebraic
+   equivalence: scalar factoring and numerical evaluation order are part of
+   the existing behavior. Each reference is local to its test. *)
+
+Tests`NonCommAlgebra`fcstDotExpandRegression = {
+	{"fcstDotExpandRegression-FactoredScalar",
+		"DotExpand[GS[p].(x (GS[q]+GS[r]))]",
+		"x (GS[p].GS[q]+GS[p].GS[r])"},
+	{"fcstDotExpandRegression-NestedFactoredScalar",
+		"DotExpand[GS[p].(x (GS[q]+y GS[r]))]",
+		"x (GS[p].GS[q]+y GS[p].GS[r])"},
+	{"fcstDotExpandRegression-DynamicClassification",
+		"Module[{f,x,y}, f[x y]:=GAD[mu]+GAD[nu]; DotExpand[GAD[rho].f[x.y]]]",
+		"(GAD[mu]+GAD[nu]) GAD[rho]"},
+	{"fcstDotExpandRegression-GeneratedDot",
+		"Module[{f,x,y}, f[x y]:=(GAD[mu]+GAD[nu]).GAD[rho]; DotExpand[f[x.y]]]",
+		"GAD[mu].GAD[rho]+GAD[nu].GAD[rho]"},
+	{"fcstDotExpandRegression-GeneratedDotInWrapper",
+		"Module[{f,x,y,h}, f[x y]:=(GAD[mu]+GAD[nu]).GAD[rho]; DotExpand[h[f[x.y]]] === h[GAD[mu].GAD[rho]+GAD[nu].GAD[rho]]]",
+		"True"},
+	{"fcstDotExpandRegression-MachineExtractionOrder",
+		"DotExpand[(1.*^200 GS[p]).(1.*^200 GS[q]).(1.*^-200 GS[r]).(1.*^-200 GS[s])]",
+		"1. GS[p].GS[q].GS[r].GS[s]"},
+	{"fcstDotExpandRegression-EmptyDot",
+		"DotExpand[{Dot[],h[Dot[]]}]",
+		"{h[]}"},
+	{"fcstDotExpandRegression-TerminalChain",
+		"Module[{chain=Dot@@Table[GA[mu[i]],{i,40}]}, DotExpand[chain]===chain]",
+		"True"},
+	{"fcstDotExpandRegression-TerminalChainWithNestedScalarDot",
+		"Module[{f,x,y}, DotExpand[GS[p].f[x.y,GS[q]]] === GS[p].f[x y,GS[q]]]",
+		"True"},
+	{"fcstDotExpandRegression-TraceScalar",
+		"DotExpand[GS[p].DiracTrace[GA[mu,nu]].GS[q]]",
+		"DiracTrace[GA[mu,nu]] GS[p].GS[q]"},
+	{"fcstDotExpandRegression-CustomDOT",
+		"Block[{DOT}, DotExpand[DOT[GA[mu],GA[nu]+GA[rho]]] === DOT[GA[mu],GA[nu]]+DOT[GA[mu],GA[rho]]]",
+		"True"},
+	{"fcstDotExpandRegression-DifferentialSlotMatrix",
+		"Module[{reference,slots,expressions}, reference[expr_] := expr //. {DOT[a___,b_+c_,d___] :> Distribute[DOT[a,b+c,d]], DOT[a___,b_*c_,d___] :> b DOT[a,c,d] /; NonCommFreeQ[b], DOT[a___,b_,d___] :> b DOT[a,d] /; NonCommFreeQ[b], DOT[a___,b_*c__,d___] :> DOT[a,b,c,d] /; NonCommQ[b]} /. DOT[] :> Sequence[]; slots={GS[p],GS[q]+GS[r],x (GS[q]+GS[r]),GS[p] GS[q],x,y+z,DiracTrace[GA[mu,nu]],f[x.y,GS[p]],GS[p]^2}; expressions=Dot@@# & /@ Tuples[slots,3]; AllTrue[expressions, SameQ[DotExpand[#],reference[#]] &]]",
+		"True"},
+	{"fcstDotExpandRegression-HeldDot",
+		"Module[{reference}, reference[expr_] := expr //. {DOT[a___,b_+c_,d___] :> Distribute[DOT[a,b+c,d]], DOT[a___,b_*c_,d___] :> b DOT[a,c,d] /; NonCommFreeQ[b], DOT[a___,b_,d___] :> b DOT[a,d] /; NonCommFreeQ[b], DOT[a___,b_*c__,d___] :> DOT[a,b,c,d] /; NonCommQ[b]} /. DOT[] :> Sequence[]; SameQ[DotExpand[Hold[GS[p].(GS[q]+GS[r])]],reference[Hold[GS[p].(GS[q]+GS[r])]]]]",
+		"True"},
+	{"fcstDotExpandRegression-DifferentialPrecision",
+		"Module[{reference,coefficients,expressions}, reference[expr_] := expr //. {DOT[a___,b_+c_,d___] :> Distribute[DOT[a,b+c,d]], DOT[a___,b_*c_,d___] :> b DOT[a,c,d] /; NonCommFreeQ[b], DOT[a___,b_,d___] :> b DOT[a,d] /; NonCommFreeQ[b], DOT[a___,b_*c__,d___] :> DOT[a,b,c,d] /; NonCommQ[b]} /. DOT[] :> Sequence[]; coefficients={1.,-0.5,1.2+0.3 I,N[1/7,30],N[1+I/3,40]}; expressions=Dot@@MapThread[Times,{#,{GS[p],GS[q],GS[r]}}] & /@ Tuples[coefficients,3]; AllTrue[expressions, SameQ[DotExpand[#],reference[#]] &]]",
+		"True"}
+};
